@@ -59,7 +59,7 @@ def run(company_id: int, event_id: int) -> str:
         f"Relevant Connection Rate: {connection_rate:.0%} ({vs_benchmark} the 50% benchmark)\n"
         f"Average ratings (1-5): {averages}\n\nComments:\n{comments}"
     )
-    text, cost = call_claude(SYSTEM_PROMPT, user_prompt)
+    text, cost = call_claude(SYSTEM_PROMPT, user_prompt, max_tokens=2048)
 
     conn.execute(
         "INSERT INTO rubric_scores (company_id, event_id, category, score, notes) VALUES (%s, %s, %s, %s, %s)",

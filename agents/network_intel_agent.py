@@ -34,11 +34,16 @@ strength and a learned relevance weight -- but NOT pre-filtered for topical rele
 judge that yourself: some candidates in the list may have nothing to do with the goal, and \
 you should ignore those even if their relationship strength is high. Use your own judgment \
 about company/role fit -- e.g. a "banking API" company is relevant to a "fintech" goal even \
-though the words don't match. Pick the strongest 1-3 candidates and, for each, explain in \
-2-3 sentences why they're a good fit and draft a short, casual intro-request message the \
-member could send -- but make clear it is a DRAFT for human review, not something to send \
-automatically. If truly nothing in the list fits the goal, say so plainly instead of \
-forcing a pick."""
+though the words don't match.
+
+Reply the way you'd actually message the organizer in chat -- direct and short, not an \
+analysis document. Plain sentences only: no markdown (no #, *, >, no headers or bullet \
+lists). Don't explain why other candidates in the list don't fit; just give your pick. Pick \
+the strongest 1-2 candidates and, for each, one or two sentences covering who they are, how \
+they're connected (through which member), and why they fit the goal. Then add a short, \
+casual draft intro message the member could send, clearly labeled as a draft for their \
+review -- not something to send automatically. If truly nothing in the list fits the goal, \
+say so in one plain sentence instead of forcing a pick."""
 
 
 def find_candidates(conn, company_id: int, limit: int = CANDIDATE_POOL_SIZE):
@@ -59,7 +64,9 @@ def find_candidates(conn, company_id: int, limit: int = CANDIDATE_POOL_SIZE):
     return rows[:limit]
 
 
-def run(company_id: int, goal_query: str) -> str:
+def run(company_id: int, goal_query: str) -> tuple[str, int | None]:
+    """Returns (reply_text, recommendation_id). recommendation_id is None
+    when there was nothing to recommend (no candidates on record)."""
     conn = get_db()
     candidates = find_candidates(conn, company_id)
 
@@ -67,7 +74,7 @@ def run(company_id: int, goal_query: str) -> str:
         summary = f"No contacts on record yet to match against '{goal_query}'."
         log_action(conn, company_id, AGENT_NAME, "search_contacts", goal_query, summary, 0.0)
         conn.close()
-        return summary
+        return summary, None
 
     candidate_text = "\n".join(
         f"- {r['contact_name']} ({r['contact_title']} at {r['contact_company']}, "
@@ -77,7 +84,7 @@ def run(company_id: int, goal_query: str) -> str:
     )
     user_prompt = f"Goal: {goal_query}\n\nCandidates:\n{candidate_text}"
 
-    text, cost = call_claude(SYSTEM_PROMPT, user_prompt)
+    text, cost = call_claude(SYSTEM_PROMPT, user_prompt, max_tokens=2048)
     log_action(conn, company_id, AGENT_NAME, "draft_outreach", user_prompt[:200], text[:200], cost)
     rec_id = add_recommendation(conn, company_id, "outreach", text, f"goal={goal_query}")
 
@@ -90,7 +97,7 @@ def run(company_id: int, goal_query: str) -> str:
         tag_recommendation(conn, rec_id, "company_type", company_type)
 
     conn.close()
-    return f"[recommendation #{rec_id}, pending_approval]\n\n{text}"
+    return text, rec_id
 
 
 if __name__ == "__main__":
@@ -98,4 +105,5 @@ if __name__ == "__main__":
     parser.add_argument("company_id", type=int, help="the company/tenant to run this for")
     parser.add_argument("goal", help="e.g. 'sponsor credits' or 'expand to NYC'")
     args = parser.parse_args()
-    print(run(args.company_id, args.goal))
+    reply, rec_id = run(args.company_id, args.goal)
+    print(f"[recommendation #{rec_id}]\n\n{reply}" if rec_id else reply)

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.env
 
 # Node / Next.js
 node_modules/
@@ -13,3 +14,9 @@ data/coffee_connector.db
 
 # OS
 .DS_Store
+
+# Quirq/XO Space install (should live outside the repo, see below)
+/xo-space/
+.quirq/
+.xo/
+/logs/

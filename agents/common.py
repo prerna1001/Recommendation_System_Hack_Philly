@@ -9,10 +9,17 @@ factory so `row["column"]` access -- the pattern every agent already uses --
 works unchanged from the earlier SQLite build.
 """
 import os
+from pathlib import Path
 
 import anthropic
 import psycopg
+from dotenv import load_dotenv
 from psycopg.rows import dict_row
+
+# Loads ANTHROPIC_API_KEY (and DATABASE_URL, if set there) from a .env file
+# at the project root, so agents/CLI/backend don't need it manually exported
+# in every new shell -- a real env var still wins over the file.
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql:///coffee_connector")
 MODEL = "claude-sonnet-5"

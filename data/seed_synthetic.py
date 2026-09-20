@@ -11,6 +11,7 @@ tenant) and scopes every other row under it via company_id.
 """
 import os
 import random
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -22,8 +23,8 @@ random.seed(7)
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql:///coffee_connector")
 SCHEMA_PATH = Path(__file__).parent / "schema_postgres.sql"
 
-DEMO_COMPANY_NAME = "Code & Coffee Philadelphia"
-DEMO_COMPANY_EMAIL = "team@codeandcoffeephilly.org"
+DEMO_COMPANY_NAME = "Riverbend Dev Collective"
+DEMO_COMPANY_EMAIL = "team@riverbenddev.example"
 DEMO_COMPANY_PASSWORD = "coffee2026"  # demo/dev credential only, printed at seed time
 
 MEMBER_NAMES = [
@@ -60,7 +61,7 @@ CONTRIBUTION_BY_COMPANY_TYPE = {
 def reset_schema(conn: psycopg.Connection) -> None:
     tables = [
         "message_feedback", "recommendation_features", "chat_messages",
-        "feature_weights", "action_log", "recommendations",
+        "chat_sessions", "feature_weights", "action_log", "recommendations",
         "rubric_scores", "feedback", "sponsor_history", "events",
         "contacts", "members", "sessions", "companies",
     ]
@@ -76,15 +77,19 @@ def seed_company(conn: psycopg.Connection) -> int:
     return cur.fetchone()["id"]
 
 
+TEAM_MEMBER_NAMES = MEMBER_NAMES[:4]
+
+
 def seed_members(conn: psycopg.Connection, company_id: int) -> list[int]:
     ids = []
-    for name in MEMBER_NAMES:
-        slug = name.lower().replace(" ", "-").replace("'", "")
+    for i, name in enumerate(TEAM_MEMBER_NAMES, start=1):
         email = name.lower().replace(" ", ".").replace("'", "") + "@example.com"
+        # Placeholder link, not a real person's profile -- clickable but clearly example.
+        linkedin_url = f"https://www.linkedin.com/in/example-member-{i}"
         cur = conn.execute(
             """INSERT INTO members (company_id, name, email, linkedin_url, photo_url)
                VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-            (company_id, name, email, f"https://linkedin.com/in/{slug}", ""),
+            (company_id, name, email, linkedin_url, ""),
         )
         ids.append(cur.fetchone()["id"])
     return ids
@@ -120,16 +125,18 @@ def seed_contacts(conn: psycopg.Connection, company_id: int, member_ids: list[in
 
 def seed_events_and_sponsors(conn: psycopg.Connection, company_id: int) -> list[int]:
     event_specs = [
-        ("Code & Coffee: Spring Build Night", "2025-04-10", "open co-working", "Pennovation Works"),
-        ("Code & Coffee: Founder Pitch Night", "2025-06-19", "pitch competition", "WeWork Philly"),
-        ("Code & Coffee: Summer Hack Day", "2025-08-14", "1-day hackathon", "Comcast Technology Center"),
-        ("Code & Coffee x AI Agents Night", "2025-11-06", "talk + co-working", "Pennovation Works"),
+        ("Riverbend: Spring Build Night", "2025-04-10", "open co-working", "Pennovation Works"),
+        ("Riverbend: Founder Pitch Night", "2025-06-19", "pitch competition", "WeWork Philly"),
+        ("Riverbend: Summer Hack Day", "2025-08-14", "1-day hackathon", "Comcast Technology Center"),
+        ("Riverbend x AI Agents Night", "2025-11-06", "talk + co-working", "Pennovation Works"),
     ]
     event_ids = []
     for name, date, fmt, venue in event_specs:
+        photo_url = f"https://picsum.photos/seed/{uuid.uuid4().hex[:10]}/800/450"
         cur = conn.execute(
-            "INSERT INTO events (company_id, name, date, format, venue) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (company_id, name, date, fmt, venue),
+            """INSERT INTO events (company_id, name, date, format, venue, photo_url)
+               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+            (company_id, name, date, fmt, venue, photo_url),
         )
         event_ids.append(cur.fetchone()["id"])
 

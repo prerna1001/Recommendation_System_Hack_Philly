@@ -85,6 +85,13 @@ export type ChatMessage = {
   created_at: string;
 };
 
+export type ChatSession = {
+  id: number;
+  title: string | null;
+  created_at: string;
+  preview: string | null;
+};
+
 export const api = {
   auth: {
     signup: (company_name: string, email: string, password: string) =>
@@ -117,14 +124,19 @@ export const api = {
     request<Sponsor>(`/events/${eventId}/sponsors`, { method: "POST", body: JSON.stringify(sponsor) }),
   deleteSponsor: (sponsorId: number) => request(`/sponsors/${sponsorId}`, { method: "DELETE" }),
 
-  getChatHistory: () => request<ChatMessage[]>("/chat"),
-  postChat: (message: string) =>
-    request<ChatMessage>("/chat", { method: "POST", body: JSON.stringify({ message }) }),
+  listChatSessions: () => request<ChatSession[]>("/chat/sessions"),
+  createChatSession: () => request<ChatSession>("/chat/sessions", { method: "POST" }),
+  deleteChatSession: (id: number) => request(`/chat/sessions/${id}`, { method: "DELETE" }),
+
+  getChatHistory: (sessionId: number) => request<ChatMessage[]>(`/chat?session_id=${sessionId}`),
+  postChat: (message: string, sessionId: number) =>
+    request<ChatMessage>("/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, session_id: sessionId }),
+    }),
   postChatFeedback: (messageId: number, liked: boolean, reason?: string) =>
     request(`/chat/${messageId}/feedback`, {
       method: "POST",
       body: JSON.stringify({ liked, reason }),
     }),
-
-  getSuggestions: () => request<{ suggestions: string | string[] }>("/suggestions"),
 };

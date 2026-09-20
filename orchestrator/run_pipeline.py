@@ -28,13 +28,15 @@ def main():
 
     if args.goal:
         print("=== Agent 1: Network Intelligence ===")
-        print(network_intel_agent.run(args.company_id, args.goal))
+        reply, rec_id = network_intel_agent.run(args.company_id, args.goal)
+        print(f"[recommendation #{rec_id}]\n\n{reply}" if rec_id else reply)
 
     if args.event:
         print("=== Agent 2: Event Retrospective ===")
         print(retrospective_agent.run(args.company_id, args.event))
         print("\n=== Agent 3: Recommendation & Planning ===")
-        print(planning_agent.run(args.company_id, args.event))
+        reply, rec_id = planning_agent.run(args.company_id, args.event)
+        print(f"[recommendation #{rec_id}]\n\n{reply}" if rec_id else reply)
 
     if not args.goal and not args.event:
         parser.print_help()

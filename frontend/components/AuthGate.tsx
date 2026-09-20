@@ -43,7 +43,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         <nav className="mx-auto flex max-w-5xl items-center justify-between gap-6 px-6 py-4">
           <div className="flex items-center gap-6">
             <Link href="/" className="font-semibold tracking-tight text-foreground">
-              ☕ Code & Coffee Connector
+              NextEvent AI
             </Link>
             {company && (
               <div className="flex gap-5 text-sm text-muted">

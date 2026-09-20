@@ -33,10 +33,15 @@ the attendee-survey-derived rubric scorecard as supporting evidence, historical 
 sponsor-contribution patterns (which sponsor types tend to give cash vs. credits vs. food), \
 and a list of already human-approved outreach contacts. If the organizer's retrospective and \
 the rubric scorecard seem to disagree, trust the organizer's account and say so explicitly \
-rather than silently averaging them. Recommend: 1) a format for the next event and why, \
-2) a venue choice and why, 3) which sponsor type(s) to prioritize approaching and what \
-they'd likely contribute based on the historical pattern. Keep it to a short, actionable \
-plan -- this will be reviewed by a human organizer before anything is booked."""
+rather than silently averaging them.
+
+Reply the way you'd actually message the organizer in chat -- plain sentences, no markdown \
+(no #, *, >, no headers or bullet lists). Cover three things, each as a short line starting \
+with its label followed by a colon: "Format:", "Venue:", "Sponsor focus:" -- one or two \
+sentences each, giving the pick and the one-line reason behind it (grounded in the \
+organizer's retrospective and the historical pattern, not generic advice). Keep the whole \
+reply short and actionable -- this will be reviewed by a human organizer before anything is \
+booked."""
 
 
 def sponsor_patterns(conn, company_id: int):
@@ -85,14 +90,16 @@ def organizer_retrospective_text(conn, company_id: int, event_id: int) -> str:
     return "\n".join(f"- {p}" for p in parts)
 
 
-def run(company_id: int, latest_event_id: int) -> str:
+def run(company_id: int, latest_event_id: int) -> tuple[str, int | None]:
+    """Returns (reply_text, recommendation_id). recommendation_id is None
+    when there's nothing to plan from yet (no rubric scores for the event)."""
     conn = get_db()
     latest_scores = conn.execute(
         "SELECT category, score, notes FROM rubric_scores WHERE event_id = %s AND company_id = %s",
         (latest_event_id, company_id),
     ).fetchall()
     if not latest_scores:
-        return f"No rubric scores for event {latest_event_id} yet -- run retrospective_agent first."
+        return f"No rubric scores for event {latest_event_id} yet -- run retrospective_agent first.", None
 
     approved = conn.execute(
         "SELECT content FROM recommendations WHERE company_id = %s AND type = 'outreach' AND status = 'approved'",
@@ -110,7 +117,7 @@ def run(company_id: int, latest_event_id: int) -> str:
         f"Historical sponsor patterns (weighted by past organizer feedback):\n{patterns_text}\n\n"
         f"Human-approved outreach contacts available:\n{approved_text}"
     )
-    text, cost = call_claude(SYSTEM_PROMPT, user_prompt)
+    text, cost = call_claude(SYSTEM_PROMPT, user_prompt, max_tokens=2048)
     log_action(conn, company_id, AGENT_NAME, "plan_next_event", user_prompt[:200], text[:200], cost)
     rec_id = add_recommendation(conn, company_id, "venue", text, f"based_on_event={latest_event_id}")
 
@@ -118,7 +125,7 @@ def run(company_id: int, latest_event_id: int) -> str:
         tag_recommendation(conn, rec_id, "sponsor_type", sponsor_type)
 
     conn.close()
-    return f"[recommendation #{rec_id}, pending_approval]\n\n{text}"
+    return text, rec_id
 
 
 if __name__ == "__main__":
@@ -126,4 +133,5 @@ if __name__ == "__main__":
     parser.add_argument("company_id", type=int, help="the company/tenant to run this for")
     parser.add_argument("latest_event_id", type=int)
     args = parser.parse_args()
-    print(run(args.company_id, args.latest_event_id))
+    reply, rec_id = run(args.company_id, args.latest_event_id)
+    print(f"[recommendation #{rec_id}]\n\n{reply}" if rec_id else reply)

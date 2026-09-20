@@ -120,12 +120,22 @@ CREATE TABLE IF NOT EXISTS action_log (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- A chat thread. An organizer can start a new one or delete an old one;
+-- each holds its own ordered chat_messages.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) NOT NULL,
+    title TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- The chat thread: organizer messages and assistant replies, in order.
 -- recommendation_id links an assistant reply back to the recommendations
 -- row it produced (if any), so feedback can be tied to a concrete action.
 CREATE TABLE IF NOT EXISTS chat_messages (
     id SERIAL PRIMARY KEY,
     company_id INTEGER REFERENCES companies(id) NOT NULL,
+    session_id INTEGER REFERENCES chat_sessions(id) NOT NULL,
     role TEXT NOT NULL,                 -- 'organizer' | 'assistant'
     content TEXT NOT NULL,
     recommendation_id INTEGER REFERENCES recommendations(id),

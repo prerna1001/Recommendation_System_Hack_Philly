@@ -1,4 +1,4 @@
-# Code & Coffee Connector
+# NextEvent AI
 
 A multi-tenant web app for developer-community organizers: matches members'
 warm connections to the org's growth goals, scores past events against a

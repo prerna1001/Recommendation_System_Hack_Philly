@@ -8,8 +8,8 @@ Multi-tenant: one shared login per company (see auth.py). Every route below
 depends on get_current_company and scopes its queries by company_id.
 """
 import json
-import re
 import sys
+import uuid
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -35,7 +35,7 @@ from auth import (  # noqa: E402
     verify_password,
 )
 
-app = FastAPI(title="Code & Coffee Connector")
+app = FastAPI(title="NextEvent AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -170,6 +170,11 @@ def delete_member(member_id: int, company_id: int = Depends(get_current_company)
 
 # --- Event dashboard ---
 
+def random_event_photo() -> str:
+    """A random placeholder photo, stable once assigned (stored on the row)."""
+    return f"https://picsum.photos/seed/{uuid.uuid4().hex[:10]}/800/450"
+
+
 class EventIn(BaseModel):
     name: str
     date: str
@@ -181,9 +186,9 @@ class EventIn(BaseModel):
 def create_event(event: EventIn, company_id: int = Depends(get_current_company)):
     conn = get_db()
     cur = conn.execute(
-        """INSERT INTO events (company_id, name, date, format, venue)
-           VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-        (company_id, event.name, event.date, event.format, event.venue),
+        """INSERT INTO events (company_id, name, date, format, venue, photo_url)
+           VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+        (company_id, event.name, event.date, event.format, event.venue, random_event_photo()),
     )
     row = cur.fetchone()
     conn.commit()
@@ -348,14 +353,19 @@ def update_retro(event_id: int, retro: RetroIn, company_id: int = Depends(get_cu
 
 ROUTER_SYSTEM_PROMPT = """Classify an event organizer's chat message about planning a \
 community event. Return ONLY compact JSON, no prose: \
-{"intent": "network" | "planning" | "create_event", "goal": "<short goal phrase, e.g. \
-'sponsor for pizza' or 'engineering manager intro'>"}. Use "network" when they're asking \
-who to reach out to, what sponsor to approach, or who could introduce them to someone for a \
-specific goal. Use "planning" when they're asking for a broader plan for the next event \
-overall (format, venue, which sponsor types to prioritize). Use "create_event" when they \
-explicitly want to create/schedule/add a new event to the calendar (e.g. "create an event \
-for...", "let's schedule our next meetup on...", "add an event called...") -- this is about \
-actually adding a new event record, not planning advice about one."""
+{"intent": "network" | "planning" | "create_event" | "suggestions", "goal": "<short goal \
+phrase, e.g. 'sponsor for pizza' or 'engineering manager intro'>"}. Use "network" when \
+they're asking who to reach out to, what sponsor to approach, or who could introduce them to \
+someone for a specific goal. Use "planning" when they're asking for a broader plan for the \
+next event overall (format, venue, which sponsor types to prioritize). Use "create_event" \
+when they explicitly want to create/schedule/add a new event to the calendar (e.g. "create \
+an event for...", "let's schedule our next meetup on...", "add an event called...") -- this \
+is about actually adding a new event record, not planning advice about one. Use \
+"suggestions" when they're asking generally what to try next, for advice, or what they \
+should do now, without naming a specific goal, person, or event to plan (e.g. "what should \
+I try next?", "any suggestions?", "what should we do now?")."""
+
+CHAT_INTENTS = ("network", "planning", "create_event", "suggestions")
 
 
 def classify_intent(message: str, conn) -> tuple[str, str]:
@@ -366,12 +376,7 @@ def classify_intent(message: str, conn) -> tuple[str, str]:
         goal = parsed.get("goal", message)
     except (json.JSONDecodeError, AttributeError):
         intent, goal = "network", message
-    return intent if intent in ("network", "planning", "create_event") else "network", goal
-
-
-def extract_rec_id(text: str) -> Optional[int]:
-    m = re.search(r"#(\d+)", text)
-    return int(m.group(1)) if m else None
+    return intent if intent in CHAT_INTENTS else "network", goal
 
 
 EVENT_EXTRACTION_SYSTEM_PROMPT = """You extract structured event-creation details from an \
@@ -386,14 +391,15 @@ the conversation -- never guess a venue or date that wasn't actually mentioned."
 REQUIRED_EVENT_FIELDS = ["name", "date", "format", "venue"]
 
 
-def extract_event_fields(conn, company_id: int) -> dict:
-    """Re-reads recent chat history (not just the latest message) so a
-    multi-turn slot-filling exchange ("what's the venue?" -> "Pennovation
-    Works") accumulates correctly without needing separate draft-state
-    storage."""
+def extract_event_fields(conn, company_id: int, session_id: int) -> dict:
+    """Re-reads recent chat history from this session (not just the latest
+    message) so a multi-turn slot-filling exchange ("what's the venue?" ->
+    "Pennovation Works") accumulates correctly without needing separate
+    draft-state storage. Scoped to the session so a fresh "new chat" doesn't
+    inherit half-filled fields from an unrelated older conversation."""
     recent = conn.execute(
-        "SELECT role, content FROM chat_messages WHERE company_id = %s ORDER BY id DESC LIMIT 10",
-        (company_id,),
+        "SELECT role, content FROM chat_messages WHERE company_id = %s AND session_id = %s ORDER BY id DESC LIMIT 10",
+        (company_id, session_id),
     ).fetchall()
     history_text = "\n".join(f"[{m['role']}] {m['content'][:300]}" for m in reversed(recent))
     user_prompt = f"Today's date: {date.today().isoformat()}\n\nConversation:\n{history_text}"
@@ -405,8 +411,8 @@ def extract_event_fields(conn, company_id: int) -> dict:
     return {k: parsed.get(k) for k in REQUIRED_EVENT_FIELDS}
 
 
-def handle_create_event(conn, company_id: int) -> str:
-    fields = extract_event_fields(conn, company_id)
+def handle_create_event(conn, company_id: int, session_id: int) -> str:
+    fields = extract_event_fields(conn, company_id, session_id)
     missing = [k for k in REQUIRED_EVENT_FIELDS if not fields.get(k)]
     if missing:
         known = ", ".join(f"{k}={v}" for k, v in fields.items() if v) or "nothing yet"
@@ -415,9 +421,9 @@ def handle_create_event(conn, company_id: int) -> str:
             f"What should I put for {'those' if len(missing) > 1 else missing[0]}?"
         )
     cur = conn.execute(
-        """INSERT INTO events (company_id, name, date, format, venue)
-           VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-        (company_id, fields["name"], fields["date"], fields["format"], fields["venue"]),
+        """INSERT INTO events (company_id, name, date, format, venue, photo_url)
+           VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+        (company_id, fields["name"], fields["date"], fields["format"], fields["venue"], random_event_photo()),
     )
     conn.commit()
     new_id = cur.fetchone()["id"]
@@ -430,13 +436,61 @@ def handle_create_event(conn, company_id: int) -> str:
 
 class ChatIn(BaseModel):
     message: str
+    session_id: int
+
+
+@app.get("/chat/sessions")
+def list_chat_sessions(company_id: int = Depends(get_current_company)):
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT s.id, s.title, s.created_at,
+                  (SELECT content FROM chat_messages WHERE session_id = s.id ORDER BY id LIMIT 1) AS preview
+           FROM chat_sessions s WHERE s.company_id = %s ORDER BY s.id DESC""",
+        (company_id,),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+@app.post("/chat/sessions")
+def create_chat_session(company_id: int = Depends(get_current_company)):
+    conn = get_db()
+    row = conn.execute(
+        "INSERT INTO chat_sessions (company_id, title) VALUES (%s, 'New chat') RETURNING *",
+        (company_id,),
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return row
+
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: int, company_id: int = Depends(get_current_company)):
+    conn = get_db()
+    conn.execute(
+        """DELETE FROM message_feedback WHERE chat_message_id IN
+           (SELECT id FROM chat_messages WHERE session_id = %s AND company_id = %s)""",
+        (session_id, company_id),
+    )
+    conn.execute(
+        "DELETE FROM chat_messages WHERE session_id = %s AND company_id = %s", (session_id, company_id)
+    )
+    row = conn.execute(
+        "DELETE FROM chat_sessions WHERE id = %s AND company_id = %s RETURNING id", (session_id, company_id)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    if not row:
+        raise HTTPException(404, f"No chat session with id {session_id}")
+    return {"ok": True}
 
 
 @app.get("/chat")
-def get_chat_history(company_id: int = Depends(get_current_company)):
+def get_chat_history(session_id: int, company_id: int = Depends(get_current_company)):
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM chat_messages WHERE company_id = %s ORDER BY id", (company_id,)
+        "SELECT * FROM chat_messages WHERE company_id = %s AND session_id = %s ORDER BY id",
+        (company_id, session_id),
     ).fetchall()
     conn.close()
     return rows
@@ -445,16 +499,20 @@ def get_chat_history(company_id: int = Depends(get_current_company)):
 @app.post("/chat")
 def post_chat(chat: ChatIn, company_id: int = Depends(get_current_company)):
     conn = get_db()
+    session_id = chat.session_id
     conn.execute(
-        "INSERT INTO chat_messages (company_id, role, content) VALUES (%s, 'organizer', %s)",
-        (company_id, chat.message),
+        "INSERT INTO chat_messages (company_id, session_id, role, content) VALUES (%s, %s, 'organizer', %s)",
+        (company_id, session_id, chat.message),
     )
     conn.commit()
 
     intent, goal = classify_intent(chat.message, conn)
+    rec_id = None
 
     if intent == "create_event":
-        reply_text = handle_create_event(conn, company_id)
+        reply_text = handle_create_event(conn, company_id, session_id)
+    elif intent == "suggestions":
+        reply_text = suggestions_text(conn, company_id)
     elif intent == "planning":
         latest = conn.execute(
             "SELECT id FROM events WHERE company_id = %s ORDER BY date DESC LIMIT 1", (company_id,)
@@ -462,20 +520,13 @@ def post_chat(chat: ChatIn, company_id: int = Depends(get_current_company)):
         if not latest:
             reply_text = "No events on record yet to plan from -- log a past event first."
         else:
-            reply_text = planning_agent.run(company_id, latest["id"])
+            reply_text, rec_id = planning_agent.run(company_id, latest["id"])
     else:
-        reply_text = network_intel_agent.run(company_id, goal)
-
-    # extract_rec_id looks for a "#<number>" pattern meant to reference a
-    # recommendations row (network_intel_agent/planning_agent both emit
-    # "[recommendation #N ...]"). create_event's "Created event #N" would
-    # false-positive on that same pattern and point recommendation_id at a
-    # completely different table's id -- skip it for that intent.
-    rec_id = extract_rec_id(reply_text) if intent != "create_event" else None
+        reply_text, rec_id = network_intel_agent.run(company_id, goal)
     cur = conn.execute(
-        """INSERT INTO chat_messages (company_id, role, content, recommendation_id)
-           VALUES (%s, 'assistant', %s, %s) RETURNING id""",
-        (company_id, reply_text, rec_id),
+        """INSERT INTO chat_messages (company_id, session_id, role, content, recommendation_id)
+           VALUES (%s, %s, 'assistant', %s, %s) RETURNING id""",
+        (company_id, session_id, reply_text, rec_id),
     )
     conn.commit()
     msg_id = cur.fetchone()["id"]
@@ -525,13 +576,16 @@ shows, not generic advice. If there's too little history to say anything specifi
 plainly instead of inventing detail."""
 
 
-@app.get("/suggestions")
-def get_suggestions(company_id: int = Depends(get_current_company)):
-    conn = get_db()
+def suggestions_text(conn, company_id: int) -> str:
+    """Synthesizes 'what to try next' from chat history + learned weights.
+    Shared by the /suggestions intent (in-chat) and the standalone endpoint."""
     messages = conn.execute(
         "SELECT role, content, created_at FROM chat_messages WHERE company_id = %s ORDER BY id DESC LIMIT 20",
         (company_id,),
     ).fetchall()
+    if not messages:
+        return "No chat history yet -- describe a next-event idea to get started."
+
     feedback_rows = conn.execute(
         """SELECT mf.liked, mf.reason, cm.content AS message_content
            FROM message_feedback mf JOIN chat_messages cm ON mf.chat_message_id = cm.id
@@ -541,10 +595,6 @@ def get_suggestions(company_id: int = Depends(get_current_company)):
     ).fetchall()
     company_weights = get_weights_map(conn, company_id, "company_type")
     sponsor_weights = get_weights_map(conn, company_id, "sponsor_type")
-    conn.close()
-
-    if not messages:
-        return {"suggestions": ["No chat history yet -- describe a next-event idea in the chat to get started."]}
 
     history_text = "\n".join(f"[{m['role']}] {m['content'][:300]}" for m in reversed(messages))
     feedback_text = "\n".join(
@@ -558,4 +608,12 @@ def get_suggestions(company_id: int = Depends(get_current_company)):
 
     user_prompt = f"Recent chat:\n{history_text}\n\nFeedback given:\n{feedback_text}\n\n{weights_text}"
     text, _cost = call_claude(SUGGESTIONS_SYSTEM_PROMPT, user_prompt, max_tokens=500)
+    return text
+
+
+@app.get("/suggestions")
+def get_suggestions(company_id: int = Depends(get_current_company)):
+    conn = get_db()
+    text = suggestions_text(conn, company_id)
+    conn.close()
     return {"suggestions": text}

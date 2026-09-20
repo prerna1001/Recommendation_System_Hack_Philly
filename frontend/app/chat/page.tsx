@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, type ChatMessage } from "@/lib/api";
+import { api, type ChatMessage, type ChatSession } from "@/lib/api";
 
 function FeedbackButtons({ message }: { message: ChatMessage }) {
   const [state, setState] = useState<"idle" | "liked" | "disliked" | "asking_reason">("idle");
@@ -58,63 +58,103 @@ function FeedbackButtons({ message }: { message: ChatMessage }) {
   );
 }
 
-function Suggestions() {
-  const [suggestions, setSuggestions] = useState<string | string[] | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await api.getSuggestions();
-      setSuggestions(res.suggestions);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
+function SessionSidebar({
+  sessions,
+  activeId,
+  onSelect,
+  onNew,
+  onDelete,
+}: {
+  sessions: ChatSession[];
+  activeId: number | null;
+  onSelect: (id: number) => void;
+  onNew: () => void;
+  onDelete: (id: number) => void;
+}) {
   return (
-    <div className="rounded-lg border border-border-warm bg-card p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="font-medium">What to try next</h2>
-        <button onClick={load} disabled={loading} className="text-xs text-muted hover:text-accent">
-          {loading ? "..." : "Refresh"}
-        </button>
+    <div className="flex w-56 flex-none flex-col gap-2 border-r border-border-warm pr-3">
+      <button
+        onClick={onNew}
+        className="rounded bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-dark"
+      >
+        + New chat
+      </button>
+      <div className="flex flex-col gap-1 overflow-y-auto">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className={`group flex items-center justify-between gap-1 rounded px-2 py-2 text-xs ${
+              s.id === activeId ? "bg-accent/10 text-foreground" : "text-muted hover:bg-background"
+            }`}
+          >
+            <button onClick={() => onSelect(s.id)} className="flex-1 truncate text-left">
+              {s.preview ? s.preview.slice(0, 40) : s.title || "New chat"}
+            </button>
+            <button
+              onClick={() => onDelete(s.id)}
+              className="hidden text-muted hover:text-red-600 group-hover:inline"
+              title="Delete chat"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
       </div>
-      {!suggestions && <p className="text-sm text-muted">Loading...</p>}
-      {Array.isArray(suggestions) ? (
-        <ul className="list-disc pl-4 text-sm text-muted">
-          {suggestions.map((s, i) => (
-            <li key={i}>{s}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="whitespace-pre-wrap text-sm text-muted">{suggestions}</p>
-      )}
     </div>
   );
 }
 
 export default function ChatPage() {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.getChatHistory().then(setMessages).catch(() => {});
+    (async () => {
+      let list = await api.listChatSessions().catch(() => []);
+      if (list.length === 0) {
+        const created = await api.createChatSession();
+        list = [created];
+      }
+      setSessions(list);
+      setActiveId(list[0].id);
+    })();
   }, []);
+
+  useEffect(() => {
+    if (activeId == null) return;
+    api.getChatHistory(activeId).then(setMessages).catch(() => {});
+  }, [activeId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  async function newChat() {
+    const created = await api.createChatSession();
+    setSessions((s) => [created, ...s]);
+    setActiveId(created.id);
+  }
+
+  async function deleteChat(id: number) {
+    await api.deleteChatSession(id);
+    const remaining = sessions.filter((s) => s.id !== id);
+    if (remaining.length === 0) {
+      const created = await api.createChatSession();
+      setSessions([created]);
+      setActiveId(created.id);
+    } else {
+      setSessions(remaining);
+      if (activeId === id) setActiveId(remaining[0].id);
+    }
+  }
+
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!input.trim() || sending) return;
+    if (!input.trim() || sending || activeId == null) return;
     const text = input;
     setInput("");
     setSending(true);
@@ -123,21 +163,32 @@ export default function ChatPage() {
       { id: Date.now(), role: "organizer", content: text, recommendation_id: null, created_at: "" },
     ]);
     try {
-      const reply = await api.postChat(text);
+      const reply = await api.postChat(text, activeId);
       setMessages((m) => [...m, reply]);
+      setSessions((s) =>
+        s.map((sess) => (sess.id === activeId && !sess.preview ? { ...sess, preview: text } : sess))
+      );
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <div className="flex h-[70vh] flex-col rounded-lg border border-border-warm bg-card">
+    <div className="mx-auto flex max-w-4xl gap-4">
+      <SessionSidebar
+        sessions={sessions}
+        activeId={activeId}
+        onSelect={setActiveId}
+        onNew={newChat}
+        onDelete={deleteChat}
+      />
+      <div className="flex h-[70vh] flex-1 flex-col rounded-lg border border-border-warm bg-card">
         <div className="flex-1 overflow-y-auto p-4">
           {messages.length === 0 && (
             <p className="text-sm text-muted">
               Describe an idea for your next event -- e.g. &quot;who should we ask for pizza
-              sponsorship?&quot; or &quot;plan the next event&quot;.
+              sponsorship?&quot; or &quot;plan the next event&quot;. Or ask &quot;what should I
+              try next?&quot; for suggestions based on what you&apos;ve done so far.
             </p>
           )}
           <div className="flex flex-col gap-4">
@@ -174,7 +225,6 @@ export default function ChatPage() {
           </button>
         </form>
       </div>
-      <Suggestions />
     </div>
   );
 }

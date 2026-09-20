@@ -1,4 +1,4 @@
-# Code & Coffee Connector — Architecture
+# NextEvent AI — Architecture
 
 Multi-tenant, multi-agent pipeline for developer-community organizers.
 Matches community members' warm connections to organizational goals, scores

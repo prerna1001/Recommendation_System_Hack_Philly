@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Code & Coffee Connector",
+  title: "NextEvent AI",
   description: "Organizer dashboard for Code & Coffee Philadelphia",
 };
 
