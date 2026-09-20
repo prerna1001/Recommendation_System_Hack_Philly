@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/.env.local
+
+# Local data artifacts
+data/coffee_connector.db
+
+# OS
+.DS_Store
