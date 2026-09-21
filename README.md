@@ -10,7 +10,8 @@ over time, the way a recommendation feed learns from what you skip.
 Built for the AI Agent Hackathon (Coffee & Code, Sept 20-22 2026).
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full agent/data-flow diagram
-and data dictionary.
+and data dictionary, or the [tiered pipeline poster](https://claude.ai/artifact/14c8JYqvW6ETcAs5ep8kq1)
+for a one-glance visual summary.
 
 ## Stack
 
