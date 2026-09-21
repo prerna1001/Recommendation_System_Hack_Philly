@@ -7,70 +7,7 @@ plan, and learns from organizer feedback over time -- with every proposed
 action requiring human approval before it's treated as real.
 
 ## Diagram
-
-```mermaid
-flowchart TB
-    CHATIN["Organizer types in chat"]
-    DASH["Dashboard: create event / add sponsor / write retro"]
-
-    CHATIN --> ROUTER{{"classify_intent()"}}
-
-    ROUTER -->|network| A1
-    ROUTER -->|planning| A3
-    ROUTER -->|create_event| CE["handle_create_event()\nno approval gate"]
-    ROUTER -->|suggestions| SUGG["suggestions_text()"]
-
-    subgraph AGENTS[" "]
-        direction TB
-        A1["Agent 1 - Network Intel\nranks contacts by strength x weight"]
-        A2["Agent 2 - Retrospective\nscores a past event vs. the rubric"]
-        A3["Agent 3 - Planning\norganizer's retro = primary signal"]
-    end
-
-    subgraph STORE["Postgres - shared state"]
-        direction TB
-        CONTACTS[("contacts")]
-        WEIGHTS[("feature_weights")]
-        EVENTS[("events + organizer retro")]
-        SPONSOR[("sponsor_history")]
-        FEEDBACK[("feedback")]
-        RUBRIC[("rubric_scores")]
-        RECS[("recommendations")]
-        CHATLOG[("chat_messages")]
-        LOG[("action_log")]
-    end
-
-    A1 -- reads --> CONTACTS
-    A1 -- reads --> WEIGHTS
-    A1 -- writes, pending_approval --> RECS
-    A1 -- writes --> LOG
-
-    A2 -- reads --> FEEDBACK
-    A2 -- writes --> RUBRIC
-    A2 -- writes --> LOG
-
-    A3 -- reads organizer retro --> EVENTS
-    A3 -- reads --> RUBRIC
-    A3 -- reads + weights --> SPONSOR
-    A3 -- reads ONLY approved --> RECS
-    A3 -- writes, pending_approval --> RECS
-    A3 -- writes --> LOG
-
-    CE --> EVENTS
-    DASH --> EVENTS
-    DASH --> SPONSOR
-    DASH -- approve / reject --> RECS
-
-    SUGG -- reads --> CHATLOG
-    SUGG -- reads --> WEIGHTS
-
-    RECS -- shown in chat / dashboard --> GATE{{"Human approval gate"}}
-    CHATLOG -- like / dislike --> GATE
-
-    GATE == apply_feedback() ==> WEIGHTS
-    WEIGHTS -. read back next run .-> A1
-    WEIGHTS -. read back next run .-> A3
-```
+<img width="909" height="762" alt="image" src="https://github.com/user-attachments/assets/4c5bd202-4860-460c-9296-4d0e38226d47" />
 
 ## Stack
 
