@@ -5,9 +5,12 @@ warm connections to the org's growth goals, scores past events against a
 rubric, and turns that into a next-event plan (format, venue, sponsor fit) --
 with every proposed action requiring human approval before it's treated as
 real, and a chat interface that learns from what the organizer likes/dislikes
-over time.
+over time, the way a recommendation feed learns from what you skip.
 
 Built for the AI Agent Hackathon (Coffee & Code, Sept 20-22 2026).
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full agent/data-flow diagram
+and data dictionary.
 
 ## Stack
 
@@ -31,7 +34,8 @@ and scopes its queries by it, so two companies' data never mixes.
 1. **`agents/network_intel_agent.py`** -- given a goal ("sponsor credits",
    "expand to NYC"), ranks the company's contacts by relationship strength ×
    a learned per-company-type weight, and lets Claude pick and explain the
-   strongest 1-3 matches -- drafting (never sending) an intro-request.
+   strongest 1-2 matches -- drafting (never sending) an intro-request, in
+   plain chat-style text.
 2. **`agents/retrospective_agent.py`** -- aggregates one past event's
    feedback into a rubric scorecard: numeric scores per category plus a
    synthesized "what worked / what didn't."
@@ -40,16 +44,27 @@ and scopes its queries by it, so two companies' data never mixes.
    primary signal over the attendee survey), sponsor-contribution patterns,
    and any *already human-approved* outreach into a next-event plan.
 
-Creating an event from the chat ("create an event for...") is **not** a
-fourth agent -- it's the same lightweight intent router the chat already
-uses (`backend/main.py::classify_intent`), extended with one more intent
-plus a plain field-extraction call. It doesn't carry the risk the three
-agents' recommendations do (no external contact, fully reversible), so it
-skips the `pending_approval` gate and writes the event directly.
+Two more things the chat can do aren't a 4th/5th agent, since neither carries
+the risk a real recommendation does -- both skip the `pending_approval` gate:
 
-All three agents (plus the router and event-extraction calls) log to
-`action_log` (agent, action, inputs/outputs, estimated cost) -- the raw
-observability trail behind the demo.
+- **Creating an event** ("create an event for...") -- the same lightweight
+  intent router (`backend/main.py::classify_intent`), extended with a plain
+  field-extraction call, writing the event directly.
+- **"What should I try next?"** -- reads chat history, past feedback, and
+  the learned weights back in and synthesizes suggestions in one Claude
+  call, folded into the chat thread rather than a separate panel.
+
+All agents (plus the router and event-extraction calls) log to `action_log`
+(agent, action, inputs/outputs, estimated cost) -- the raw observability
+trail behind the demo.
+
+## Chat sessions
+
+The chat is organized into sessions, not one endless thread -- "+ New chat"
+starts a fresh one, older ones stay in the sidebar with a preview, and any
+one can be deleted. A "new chat" also means slot-filling for event creation
+(e.g. "what's the venue?") only looks at that session's own history, so it
+never mixes up two unrelated conversations.
 
 ## The learning loop
 
@@ -58,9 +73,10 @@ Every agent-proposed recommendation is tagged with the features it drew on
 `agents/weights.py`). Two signals nudge those weights: a 👍/👎 on a chat
 suggestion, or an approve/reject via the dashboard/CLI -- both call the same
 `apply_feedback()`, so a CLI approval and a chat dislike feed one shared,
-per-company learned-weight table. `network_intel_agent` and `planning_agent`
-read those weights back in on every run, so repeated feedback measurably
-re-ranks future suggestions instead of just gating them.
+per-company learned-weight table (`weight *= 1.2` on like/approve, `*= 0.8`
+on dislike/reject, floored at `0.1`). `network_intel_agent` and
+`planning_agent` read those weights back in on every run, so repeated
+feedback measurably re-ranks future suggestions instead of just gating them.
 
 Matching note: contact/goal relevance is judged entirely by Claude reasoning
 over an unfiltered, weight-ranked candidate pool, not a SQL `LIKE` or a
@@ -83,7 +99,10 @@ the next stage.
 # Backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...
+
+# Put your key in a .env file at the project root (loaded automatically via
+# python-dotenv -- no manual `export` needed in every new shell):
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
 brew install postgresql@14   # or any local Postgres
 createdb coffee_connector
@@ -124,35 +143,32 @@ Look up a company's id with `psql coffee_connector -c "SELECT id, name FROM comp
 
 `data/seed_synthetic.py` generates all member/contact/sponsor-history/
 feedback data for this build -- there was no time during the hackathon
-window to run real OAuth consent flows with a community's real members.
-Priority order to replace it with real data:
+window to run real OAuth consent flows with a community's real members. See
+"Future features" below for the priority order to replace it with real data.
 
-1. **Sponsor history** -- manual entry from the organizers' own memory into
-   `sponsor_history` (via the dashboard's "Add sponsor" form); highest-value,
-   lowest-effort real data available.
-2. **Team roster** -- already a real form (`/team`); just needs real people
-   entered per company instead of relying on the seed script.
-3. **Member contact graph** -- Gmail + Calendar OAuth (Google Cloud Console,
-   "Testing" mode supports up to 100 users, no verification review needed) to
-   populate `contacts` from real interaction metadata.
-4. **New-sponsor discovery** -- an agent that reads public sponsor pages of
-   other local hackathons/meetups (Devpost, Eventbrite, Meetup) -- fully
-   public data, no auth needed. Not built yet.
+## Sponsors used
 
-## Running on Quirq / XO
+See [docs/sponsors.docx](./docs/sponsors.docx) for details and screenshots.
 
-Quirq: Build It requires the submission to run on Quirq, via the managed
-cloud at app.xo.builders or a local install (`curl -fsSL https://quirq.ai/install | sh`,
-pointed at this repo via `XO_PROJECTS_ROOT`). This repo's `action_log` table
-already captures per-agent actions/costs/results at the application level
-independent of whatever XO's own session view captures.
+- **Anthropic Claude** (Sonnet 5) -- every agent, the chat router, and the
+  suggestions feature run on it: reasoning, ranking, drafting, and scoring.
+- **Quirq / XO Space** -- observability. XO Space independently tracks the
+  actual agent development sessions that built this project, separate from
+  the app's own `action_log` table. Local install
+  (`curl -fsSL https://quirq.ai/install | sh`), pointed at this repo via
+  `XO_PROJECTS_ROOT` (kept outside the repo itself, with this repo adopted
+  into it via a symlink -- see `ARCHITECTURE.md` if setting this up fresh).
+- **The Code Registry** -- post-hackathon static analysis of this public
+  repo; no extra integration needed beyond the repo staying public.
+- **GalaxyGate** -- not used for this submission (see below); plain VPS
+  hosting, not an observability platform like Quirq.
 
 ## GalaxyGate
 
-Not required for the Quirq track -- GalaxyGate is plain VPS hosting (not an
-observability platform like Quirq). If time allows, deploy the FastAPI
-backend + Postgres (+ optionally the Next.js frontend) on a GalaxyGate VPS so
-the dashboard is a real public link instead of `localhost`.
+Not required for the Quirq track -- GalaxyGate is plain VPS hosting. This
+submission runs locally; deploying the FastAPI backend + Postgres (+
+optionally the Next.js frontend) to a GalaxyGate VPS so the dashboard is a
+real public link is the top item in "Future features" below.
 
 ## Judging-criteria alignment (Quirq: Build It)
 
@@ -169,3 +185,38 @@ the dashboard is a real public link instead of `localhost`.
 - **Reliability & safety (20%)** -- `pending_approval` gate on every
   agent-proposed action, per-company data isolation, session-based auth; see
   "Safeguards" above.
+
+## Future features
+
+Roughly in priority order -- highest-value/lowest-effort first:
+
+1. **Public hosting on GalaxyGate** -- so the dashboard is a real link
+   instead of `localhost`, for anyone to try without a local setup.
+2. **Real sponsor history** -- organizers already have a real form for this
+   (`/dashboard`'s "Add sponsor"); just needs real data entered per company
+   instead of relying on the seed script.
+3. **Real team rosters** -- `/team` is already a real CRUD form; same as
+   above, needs real people instead of seeded ones.
+4. **Gmail + Calendar OAuth** for `contacts` -- populate the contact graph
+   from real interaction metadata instead of synthetic data (Google Cloud
+   Console "Testing" mode supports up to 100 users, no verification review
+   needed to start).
+5. **New-sponsor discovery agent** -- reads public sponsor pages of other
+   local hackathons/meetups (Devpost, Eventbrite, Meetup) to surface
+   sponsors the organizer doesn't already have a relationship with -- fully
+   public data, no auth needed. Not built yet.
+6. **Optional real outreach send** -- today every draft is copy-paste only;
+   an explicit, opt-in "send via Gmail" button on an *already-approved*
+   recommendation, still never automatic.
+7. **Vector-embedding matching** -- once an embeddings API key is
+   available, add a similarity pass ahead of Claude's judgment call for
+   larger contact pools where an unfiltered candidate list stops being
+   practical to hand the model directly.
+8. **Cross-event trend view** -- a dashboard chart of rubric scores and
+   turnout over time per company, not just per-event detail pages.
+9. **Per-member roles** -- today it's one shared company login; a lightweight
+   role layer (e.g. read-only vs. can-approve) for larger teams that want to
+   restrict who can approve outreach.
+10. **Retrospective reminders** -- a nudge (email or in-app) when an event's
+    date has passed but its retrospective fields are still empty, since
+    Agent 3's plan quality depends entirely on that being filled in.
